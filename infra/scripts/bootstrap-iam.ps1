@@ -7,7 +7,7 @@ param(
   [string]$StateBucketName = $env:STATE_BUCKET_NAME,
   [string]$BootstrapRoleName = $(if ($env:BOOTSTRAP_ROLE_NAME) { $env:BOOTSTRAP_ROLE_NAME } else { "TerraformBootstrapRole" }),
   [string]$ExecRoleName = $(if ($env:EXEC_ROLE_NAME) { $env:EXEC_ROLE_NAME } else { "TerraformExecutionRole" }),
-  [string]$UseKms = $(if ($env:USE_KMS) { $env:USE_KMS } else { "true" }),
+  [string]$UseKms = $(if ($env:USE_KMS) { $env:USE_KMS } elseif ($env:TF_USE_KMS) { $env:TF_USE_KMS } else { "true" }),
   [string]$StateKmsKeyArn = $env:STATE_KMS_KEY_ARN,
   [switch]$DryRun
 )
@@ -24,6 +24,14 @@ if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
 if (-not $Org -or -not $Repo -or -not $EnvName -or -not $AwsRegion -or -not $StateBucketName) {
   Fail "Set ORG, REPO, ENV_NAME, AWS_REGION, and STATE_BUCKET_NAME"
 }
+
+$tfWorkdir = $(if ($env:TF_WORKDIR) { $env:TF_WORKDIR } else { "infra" })
+$tfOrgPrefix = $(if ($env:TF_ORG_PREFIX) { $env:TF_ORG_PREFIX } else { $Org })
+$tfStateBucketSuffix = $(if ($env:TF_STATE_BUCKET_SUFFIX) { $env:TF_STATE_BUCKET_SUFFIX } else { "" })
+$tfEnableAccessLogs = $(if ($env:TF_ENABLE_ACCESS_LOGS) { $env:TF_ENABLE_ACCESS_LOGS } else { "false" })
+$tfLogBucketName = $(if ($env:TF_LOG_BUCKET_NAME) { $env:TF_LOG_BUCKET_NAME } else { "" })
+$tfLogBucketPrefix = $(if ($env:TF_LOG_BUCKET_PREFIX) { $env:TF_LOG_BUCKET_PREFIX } else { "tfstate/" })
+$tfExtraTagsHcl = $(if ($env:TF_EXTRA_TAGS_HCL) { $env:TF_EXTRA_TAGS_HCL } else { "" })
 
 $dryRunEnabled = $DryRun.IsPresent -or $env:DRY_RUN -in @("1", "true", "TRUE")
 
@@ -85,7 +93,7 @@ $trustPolicy = @"
 
 function Ensure-Role($RoleName, $TrustPolicy) {
   $out = aws iam get-role --role-name $RoleName 2>&1
-  if ($LASTEXITCODE -eq 0) { return }
+  if ($LASTEXITCODE -eq 0) { Write-Host "Role exists: $RoleName (skipping create)"; return }
   if ($out -match "NoSuchEntity") {
     if ($dryRunEnabled) {
       Write-Host "[dry-run] Would create role: $RoleName"
@@ -258,16 +266,27 @@ if ($dryRunEnabled) {
   if ($LASTEXITCODE -ne 0) { Fail "Missing iam:PutRolePolicy permission for $ExecRoleName" }
 }
 
+$useKmsBool = "false"
+if ($UseKms -eq "true" -or $UseKms -eq "1") { $useKmsBool = "true" }
+
+$tfExtraTagsHclOut = $(if ($tfExtraTagsHcl) { $tfExtraTagsHcl } else { "{}" })
+
 Write-Host "OIDC provider: $providerArn"
 Write-Host "Bootstrap role: arn:aws:iam::${currentAccountId}:role/$BootstrapRoleName"
 Write-Host "Execution role: arn:aws:iam::${currentAccountId}:role/$ExecRoleName"
 Write-Host "Set GitHub Environment variables:"
+Write-Host "  TF_WORKDIR=$tfWorkdir"
+Write-Host "  TF_ORG_PREFIX=$tfOrgPrefix"
+Write-Host "  TF_STATE_BUCKET_SUFFIX=$tfStateBucketSuffix"
+Write-Host "  TF_ENABLE_ACCESS_LOGS=$tfEnableAccessLogs"
+Write-Host "  TF_LOG_BUCKET_NAME=$tfLogBucketName"
+Write-Host "  TF_LOG_BUCKET_PREFIX=$tfLogBucketPrefix"
+Write-Host "  TF_USE_KMS=$useKmsBool"
+Write-Host "  TF_EXTRA_TAGS_HCL=$tfExtraTagsHclOut"
+Write-Host "  AWS_ACCOUNT_ID=$currentAccountId"
 Write-Host "  AWS_REGION=$AwsRegion"
 Write-Host "  AWS_BOOTSTRAP_ROLE_ARN=arn:aws:iam::${currentAccountId}:role/$BootstrapRoleName"
 Write-Host "  AWS_ROLE_ARN=arn:aws:iam::${currentAccountId}:role/$ExecRoleName"
-
-$useKmsBool = "false"
-if ($UseKms -eq "true" -or $UseKms -eq "1") { $useKmsBool = "true" }
 
 Write-Host ""
 Write-Host "Bootstrap tfvars values (append to infra/bootstrap/$EnvName.tfvars):"

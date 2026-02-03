@@ -10,7 +10,7 @@ on:
         description: "Target environment"
       action:
         type: choice
-        options: [plan, apply]
+        options: [plan, apply, destroy]
         default: plan
         description: "Terraform action"
 
@@ -93,10 +93,12 @@ jobs:
           extra_tags = ${extra_tags}
           EOF
       - run: terraform -chdir=bootstrap init
-      - name: Terraform plan/apply
+      - name: Terraform plan/apply/destroy
         run: |
           if [ "${{ inputs.action }}" = "apply" ]; then
             terraform -chdir=bootstrap apply -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
+          elif [ "${{ inputs.action }}" = "destroy" ]; then
+            terraform -chdir=bootstrap destroy -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
           else
             terraform -chdir=bootstrap plan -var-file=${{ inputs.env }}.tfvars -input=false
           fi

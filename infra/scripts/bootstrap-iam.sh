@@ -34,7 +34,10 @@ Optional:
 
 You can also provide these via environment variables:
   ORG, REPO, ENV_NAME, AWS_REGION, STATE_BUCKET_NAME, ACCOUNT_ID,
-  BOOTSTRAP_ROLE_NAME, EXEC_ROLE_NAME, USE_KMS, STATE_KMS_KEY_ARN, DRY_RUN
+  BOOTSTRAP_ROLE_NAME, EXEC_ROLE_NAME, USE_KMS, TF_USE_KMS,
+  TF_WORKDIR, TF_ORG_PREFIX, TF_STATE_BUCKET_SUFFIX, TF_ENABLE_ACCESS_LOGS,
+  TF_LOG_BUCKET_NAME, TF_LOG_BUCKET_PREFIX, TF_EXTRA_TAGS_HCL,
+  STATE_KMS_KEY_ARN, DRY_RUN
 EOF
 }
 
@@ -46,7 +49,14 @@ ACCOUNT_ID_INPUT="${ACCOUNT_ID:-}"
 STATE_BUCKET_NAME="${STATE_BUCKET_NAME:-}"
 BOOTSTRAP_ROLE_NAME="${BOOTSTRAP_ROLE_NAME:-TerraformBootstrapRole}"
 EXEC_ROLE_NAME="${EXEC_ROLE_NAME:-TerraformExecutionRole}"
-USE_KMS="${USE_KMS:-true}"
+TF_WORKDIR="${TF_WORKDIR:-infra}"
+TF_STATE_BUCKET_SUFFIX="${TF_STATE_BUCKET_SUFFIX:-}"
+TF_ENABLE_ACCESS_LOGS="${TF_ENABLE_ACCESS_LOGS:-false}"
+TF_LOG_BUCKET_NAME="${TF_LOG_BUCKET_NAME:-}"
+TF_LOG_BUCKET_PREFIX="${TF_LOG_BUCKET_PREFIX:-tfstate/}"
+TF_EXTRA_TAGS_HCL="${TF_EXTRA_TAGS_HCL:-}"
+TF_USE_KMS="${TF_USE_KMS:-}"
+USE_KMS="${USE_KMS:-${TF_USE_KMS:-true}}"
 STATE_KMS_KEY_ARN="${STATE_KMS_KEY_ARN:-}"
 DRY_RUN="${DRY_RUN:-false}"
 
@@ -67,6 +77,8 @@ while [ $# -gt 0 ]; do
     *) fail "Unknown argument: $1" ;;
   esac
 done
+
+TF_ORG_PREFIX="${TF_ORG_PREFIX:-$ORG}"
 
 if [ -z "$ORG" ] || [ -z "$REPO" ] || [ -z "$ENV_NAME" ] || [ -z "$AWS_REGION" ] || [ -z "$STATE_BUCKET_NAME" ]; then
   usage
@@ -142,6 +154,7 @@ ensure_role() {
   local role_name="$1"
   local get_out=""
   if get_out=$(aws iam get-role --role-name "$role_name" 2>&1); then
+    echo "Role exists: $role_name (skipping create)"
     return
   fi
   if echo "$get_out" | grep -qi "NoSuchEntity"; then
@@ -321,18 +334,29 @@ else
     || fail "Missing iam:PutRolePolicy permission for $EXEC_ROLE_NAME"
 fi
 
-echo "OIDC provider: $provider_arn"
-echo "Bootstrap role: arn:aws:iam::${account_id}:role/${BOOTSTRAP_ROLE_NAME}"
-echo "Execution role: arn:aws:iam::${account_id}:role/${EXEC_ROLE_NAME}"
-echo "Set GitHub Environment variables:"
-echo "  AWS_REGION=${AWS_REGION}"
-echo "  AWS_BOOTSTRAP_ROLE_ARN=arn:aws:iam::${account_id}:role/${BOOTSTRAP_ROLE_NAME}"
-echo "  AWS_ROLE_ARN=arn:aws:iam::${account_id}:role/${EXEC_ROLE_NAME}"
-
 use_kms_bool="false"
 if [ "$USE_KMS" = "true" ] || [ "$USE_KMS" = "1" ]; then
   use_kms_bool="true"
 fi
+
+extra_tags_out="${TF_EXTRA_TAGS_HCL:-{}}"
+
+echo "OIDC provider: $provider_arn"
+echo "Bootstrap role: arn:aws:iam::${account_id}:role/${BOOTSTRAP_ROLE_NAME}"
+echo "Execution role: arn:aws:iam::${account_id}:role/${EXEC_ROLE_NAME}"
+echo "Set GitHub Environment variables:"
+echo "  TF_WORKDIR=${TF_WORKDIR}"
+echo "  TF_ORG_PREFIX=${TF_ORG_PREFIX}"
+echo "  TF_STATE_BUCKET_SUFFIX=${TF_STATE_BUCKET_SUFFIX}"
+echo "  TF_ENABLE_ACCESS_LOGS=${TF_ENABLE_ACCESS_LOGS}"
+echo "  TF_LOG_BUCKET_NAME=${TF_LOG_BUCKET_NAME}"
+echo "  TF_LOG_BUCKET_PREFIX=${TF_LOG_BUCKET_PREFIX}"
+echo "  TF_USE_KMS=${use_kms_bool}"
+echo "  TF_EXTRA_TAGS_HCL=${extra_tags_out}"
+echo "  AWS_ACCOUNT_ID=${account_id}"
+echo "  AWS_REGION=${AWS_REGION}"
+echo "  AWS_BOOTSTRAP_ROLE_ARN=arn:aws:iam::${account_id}:role/${BOOTSTRAP_ROLE_NAME}"
+echo "  AWS_ROLE_ARN=arn:aws:iam::${account_id}:role/${EXEC_ROLE_NAME}"
 
 cat <<EOF
 
