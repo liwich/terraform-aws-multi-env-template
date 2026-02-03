@@ -22,8 +22,13 @@ if (-not $env -and $cmd -ne "fmt") {
   exit 1
 }
 
-$stackDir = "live/$env/$stack"
-$backendConfig = "$stackDir/backend.hcl"
+$rootDir = $env:TF_ROOT
+if (-not $rootDir) {
+  $rootDir = (Resolve-Path (Join-Path $PSScriptRoot ".."))
+}
+
+$stackDir = Join-Path $rootDir "live/$env/$stack"
+$backendConfig = Join-Path $stackDir "backend.hcl"
 
 if ($cmd -ne "fmt") {
   if (-not (Test-Path $stackDir)) {
@@ -34,7 +39,7 @@ if ($cmd -ne "fmt") {
 
 switch ($cmd) {
   "fmt" {
-    terraform fmt -recursive
+    terraform fmt -recursive $rootDir
   }
   "lint" {
     tflint --init --chdir $stackDir

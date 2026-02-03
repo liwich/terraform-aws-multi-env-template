@@ -23,6 +23,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     concurrency: terraform-bootstrap-${{ inputs.env }}
+    env:
+      TF_WORKDIR: ${{ vars.TF_WORKDIR || '.' }}
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKDIR }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3

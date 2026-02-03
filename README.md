@@ -19,6 +19,8 @@ For the full spec, rationale, and tradeoffs, see `PROJECT_SPEC.md`.
 - `modules/` reusable modules.
 - `scripts/` CLI wrappers (`tf` for bash, `tf.ps1` for PowerShell).
 
+If you place this template under a monorepo folder like `infrastructure/`, set `TF_WORKDIR=infrastructure` as a GitHub Actions variable so workflows run from the right directory. The scripts resolve paths relative to their location, so running `./infrastructure/scripts/tf` works without edits.
+
 ## Stacks
 A stack is a Terraform root module under `live/<env>/<stack>` that represents one deployable unit with its own state and guardrails. Each stack uses a dedicated backend key and can be planned/applied independently.
 

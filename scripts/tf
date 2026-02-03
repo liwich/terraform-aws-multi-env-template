@@ -6,6 +6,9 @@ stack="storage"
 cmd=""
 args=()
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="${TF_ROOT:-$(cd "${script_dir}/.." && pwd)}"
+
 for arg in "$@"; do
   case "$arg" in
     env=*) env="${arg#env=}" ;;
@@ -36,7 +39,7 @@ if [ -z "$env" ] && [ "$cmd" != "fmt" ]; then
   exit 1
 fi
 
-stack_dir="live/${env}/${stack}"
+stack_dir="${root_dir}/live/${env}/${stack}"
 backend_config="${stack_dir}/backend.hcl"
 
 if [ "$cmd" != "fmt" ]; then
@@ -48,7 +51,7 @@ fi
 
 case "$cmd" in
   fmt)
-    terraform fmt -recursive
+    terraform fmt -recursive "${root_dir}"
     ;;
   lint)
     tflint --init --chdir "$stack_dir"
