@@ -1,0 +1,12 @@
+# Cursor Rules
+
+- Use Terraform CLI 1.14.x and pin provider versions.
+- Use S3 backend with `use_lockfile = true`; do not introduce DynamoDB locking for new work.
+- Enforce per-environment separation: dev/stage/prod must have distinct state keys and buckets.
+- Require guardrails in every live stack: account ID check, region allow-list, and default tags.
+- Use role assumption patterns compatible with local profiles and CI OIDC; no long-lived keys in repo.
+- Keep the template secure-by-default: block public access, enforce encryption, least-privilege IAM.
+- Use placeholders like <LIKE_THIS> for account-specific values.
+- Do not store secrets in `*.tfvars`; use SSM/Secrets Manager references.
+- Any new stacks must include `backend.hcl`, `versions.tf`, `providers.tf`, and guardrails.
+- Avoid overengineering; prefer clear, clone-and-go scripts and defaults.

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+env=""
+stack="storage"
+cmd=""
+args=()
+
+for arg in "$@"; do
+  case "$arg" in
+    env=*) env="${arg#env=}" ;;
+    stack=*) stack="${arg#stack=}" ;;
+    plan|apply|destroy|refresh|validate|output|state|import|taint|untaint|init|fmt|lint|sec)
+      cmd="$arg"
+      ;;
+    *)
+      args+=("$arg")
+      ;;
+  esac
+done
+
+if [ -z "$cmd" ]; then
+  echo "Usage: ./scripts/tf env=<dev|stage|prod> stack=<stack> <plan|apply|destroy|init|validate|fmt|lint|sec>"
+  exit 1
+fi
+
+if [ -z "$env" ] && [ "$cmd" != "fmt" ]; then
+  echo "Missing env=. Example: env=dev"
+  exit 1
+fi
+
+stack_dir="live/${env}/${stack}"
+backend_config="${stack_dir}/backend.hcl"
+
+if [ "$cmd" != "fmt" ]; then
+  if [ ! -d "$stack_dir" ]; then
+    echo "Stack directory not found: $stack_dir"
+    exit 1
+  fi
+fi
+
+case "$cmd" in
+  fmt)
+    terraform fmt -recursive
+    ;;
+  lint)
+    tflint --init --chdir "$stack_dir"
+    tflint --chdir "$stack_dir"
+    ;;
+  sec)
+    tfsec "$stack_dir"
+    ;;
+  init)
+    terraform -chdir="$stack_dir" init -backend-config="$backend_config"
+    ;;
+  *)
+    terraform -chdir="$stack_dir" init -backend-config="$backend_config"
+    terraform -chdir="$stack_dir" "$cmd" "${args[@]}"
+    ;;
+esac

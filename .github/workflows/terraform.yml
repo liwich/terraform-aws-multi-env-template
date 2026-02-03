@@ -1,0 +1,94 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - "bootstrap/**"
+      - "live/**"
+      - "modules/**"
+      - "scripts/**"
+      - ".tflint.hcl"
+  push:
+    branches: ["main"]
+    paths:
+      - "bootstrap/**"
+      - "live/**"
+      - "modules/**"
+      - "scripts/**"
+      - ".tflint.hcl"
+  workflow_dispatch:
+    inputs:
+      env:
+        type: choice
+        options: [dev, stage, prod]
+        default: dev
+        description: "Target environment"
+      stack:
+        type: string
+        default: storage
+        description: "Target stack"
+      action:
+        type: choice
+        options: [plan, apply]
+        default: plan
+        description: "Terraform action"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev]
+        stack: [storage]
+    environment: ${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.x
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: ./scripts/tf env=${{ matrix.env }} stack=${{ matrix.stack }} plan -input=false
+
+  apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev, stage, prod]
+        stack: [storage]
+    environment: ${{ matrix.env }}
+    concurrency: terraform-${{ matrix.env }}-${{ matrix.stack }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.x
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: ./scripts/tf env=${{ matrix.env }} stack=${{ matrix.stack }} apply -auto-approve -input=false
+
+  dispatch:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    concurrency: terraform-${{ inputs.env }}-${{ inputs.stack }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.x
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: ./scripts/tf env=${{ inputs.env }} stack=${{ inputs.stack }} ${{ inputs.action }} -input=false
