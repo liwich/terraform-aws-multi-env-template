@@ -49,44 +49,32 @@ Key placeholders to set:
 - `<TERRAFORM_EXEC_ROLE_NAME>`, `<BOOTSTRAP_ROLE_NAME>` (if using role assumption)
 
 ## Bootstrap the backend (one-time per account)
-```bash
-terraform -chdir=bootstrap init
-terraform -chdir=bootstrap apply -var-file=dev.tfvars
-```
+This repo is configured for CI-only execution. Use the GitHub Actions workflow:
 
-Repeat for `stage.tfvars` and `prod.tfvars` in the corresponding accounts.
+- Actions → **Terraform Bootstrap** → Run workflow
+  - `env`: dev, stage, or prod
+  - `action`: plan or apply
 
-## Run a stack (local)
-```bash
-./scripts/tf env=dev stack=storage plan
-./scripts/tf env=dev stack=storage apply
-```
+Set `AWS_BOOTSTRAP_ROLE_ARN` and `AWS_REGION` in each GitHub Environment.
 
-PowerShell:
-```powershell
-./scripts/tf.ps1 -env dev -stack storage plan
-./scripts/tf.ps1 -env dev -stack storage apply
-```
-
-Makefile shortcuts:
-```bash
-make dev-plan
-make dev-apply
-```
+## Run a stack (GitHub Actions)
+- Open a PR to trigger a plan.
+- Merge to `main` to apply (with environment approvals).
+- Or run manually: Actions → **Terraform** → Run workflow.
 
 ## Quality checks
-```bash
-./scripts/tf fmt
-./scripts/tf env=dev stack=storage validate
-./scripts/tf env=dev stack=storage lint
-./scripts/tf env=dev stack=storage sec
-```
+- Run via CI (recommended).
+- Break-glass local override: set `ALLOW_LOCAL_TF=1` and use the scripts.
 
 ## CI/CD
 The GitHub Actions workflow in `.github/workflows/terraform.yml`:
 - Runs plan on PRs.
 - Applies on merge to `main` with per-environment approvals.
 - Uses OIDC to assume roles (set `AWS_ROLE_ARN` and `AWS_REGION` in each GitHub Environment).
+
+## Local execution policy
+Local Terraform execution is disabled by default in `scripts/tf` and `scripts/tf.ps1`.
+If you must run locally, set `ALLOW_LOCAL_TF=1` (break-glass only).
 
 ## Guardrails and safety
 - `allowed_account_ids` in providers block wrong credentials.

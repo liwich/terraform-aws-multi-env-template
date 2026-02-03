@@ -24,6 +24,13 @@ if [ -z "$cmd" ]; then
   exit 1
 fi
 
+allow_local="${ALLOW_LOCAL_TF:-}"
+if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${CI:-}" != "true" ] && [ "$allow_local" != "1" ] && [ "$allow_local" != "true" ]; then
+  echo "Local Terraform execution is disabled. Use GitHub Actions workflows (PR/merge or workflow_dispatch)."
+  echo "Set ALLOW_LOCAL_TF=1 to override for break-glass use only."
+  exit 1
+fi
+
 if [ -z "$env" ] && [ "$cmd" != "fmt" ]; then
   echo "Missing env=. Example: env=dev"
   exit 1

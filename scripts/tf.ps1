@@ -10,6 +10,13 @@ if (-not $cmd) {
   exit 1
 }
 
+$allowLocal = $env:ALLOW_LOCAL_TF
+if (-not $env:GITHUB_ACTIONS -and -not $env:CI -and $allowLocal -notin @("1", "true", "TRUE")) {
+  Write-Host "Local Terraform execution is disabled. Use GitHub Actions workflows (PR/merge or workflow_dispatch)."
+  Write-Host "Set ALLOW_LOCAL_TF=1 to override for break-glass use only."
+  exit 1
+}
+
 if (-not $env -and $cmd -ne "fmt") {
   Write-Host "Missing -env. Example: -env dev"
   exit 1

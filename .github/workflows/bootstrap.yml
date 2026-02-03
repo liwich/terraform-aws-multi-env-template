@@ -1,0 +1,42 @@
+name: Terraform Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        type: choice
+        options: [dev, stage, prod]
+        default: dev
+        description: "Target environment"
+      action:
+        type: choice
+        options: [plan, apply]
+        default: plan
+        description: "Terraform action"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    concurrency: terraform-bootstrap-${{ inputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.x
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: terraform -chdir=bootstrap init
+      - name: Terraform plan/apply
+        run: |
+          if [ "${{ inputs.action }}" = "apply" ]; then
+            terraform -chdir=bootstrap apply -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
+          else
+            terraform -chdir=bootstrap plan -var-file=${{ inputs.env }}.tfvars -input=false
+          fi

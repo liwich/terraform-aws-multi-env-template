@@ -517,10 +517,10 @@ jobs:
 **Getting Started**
 1) Prerequisites: Terraform 1.14.x, AWS CLI, tflint, tfsec (or checkov), pre-commit (optional).
 2) Fill placeholders in `bootstrap/*.tfvars`, `live/*/storage/terraform.tfvars`, and `live/*/storage/backend.hcl`.
-3) Local credentials: `aws configure --profile <LOCAL_AWS_PROFILE>` or `AWS_PROFILE=<LOCAL_AWS_PROFILE>`.
-4) Bootstrap backend once per account: `terraform -chdir=bootstrap init` then `terraform -chdir=bootstrap apply -var-file=dev.tfvars`.
-5) Init/plan/apply dev stack: `./scripts/tf env=dev stack=storage plan` then `./scripts/tf env=dev stack=storage apply`.
-6) Quality checks: `./scripts/tf fmt`, `./scripts/tf env=dev stack=storage validate`, `./scripts/tf env=dev stack=storage lint`, `./scripts/tf env=dev stack=storage sec`.
+3) CI-only execution: local Terraform commands are disabled by default; use GitHub Actions workflows.
+4) Bootstrap backend (one-time per account): Actions → **Terraform Bootstrap** → Run workflow (env + action).
+5) Run stacks: PR triggers plan, merge to `main` applies with approvals; manual runs via Actions → **Terraform** → Run workflow.
+6) Quality checks: run in CI; local break-glass requires `ALLOW_LOCAL_TF=1`.
 7) CI/CD: configure GitHub Environments `dev`, `stage`, `prod` with `AWS_ROLE_ARN` and `AWS_REGION`, and require approvals for stage/prod.
 
 **Template Completion Checklist**
