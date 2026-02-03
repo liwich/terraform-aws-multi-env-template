@@ -3,19 +3,11 @@ name: Terraform
 on:
   pull_request:
     paths:
-      - "bootstrap/**"
-      - "live/**"
-      - "modules/**"
-      - "scripts/**"
-      - ".tflint.hcl"
+      - "infra/**"
   push:
     branches: ["main"]
     paths:
-      - "bootstrap/**"
-      - "live/**"
-      - "modules/**"
-      - "scripts/**"
-      - ".tflint.hcl"
+      - "infra/**"
   workflow_dispatch:
     inputs:
       env:
@@ -42,7 +34,16 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
-      TF_WORKDIR: ${{ vars.TF_WORKDIR || '.' }}
+      TF_WORKDIR: ${{ vars.TF_WORKDIR || 'infra' }}
+      TF_ORG_PREFIX: ${{ secrets.TF_ORG_PREFIX || vars.TF_ORG_PREFIX }}
+      TF_STATE_BUCKET_SUFFIX: ${{ secrets.TF_STATE_BUCKET_SUFFIX || vars.TF_STATE_BUCKET_SUFFIX }}
+      TF_ALLOWED_REGIONS: ${{ secrets.TF_ALLOWED_REGIONS || vars.TF_ALLOWED_REGIONS }}
+      TF_EXAMPLE_BUCKET_SUFFIX: ${{ secrets.TF_EXAMPLE_BUCKET_SUFFIX || vars.TF_EXAMPLE_BUCKET_SUFFIX }}
+      TF_EXTRA_TAGS_HCL: ${{ secrets.TF_EXTRA_TAGS_HCL || vars.TF_EXTRA_TAGS_HCL }}
+      TF_STATE_KMS_KEY_ARN: ${{ secrets.TF_STATE_KMS_KEY_ARN || vars.TF_STATE_KMS_KEY_ARN }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID || vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
     defaults:
       run:
         working-directory: ${{ env.TF_WORKDIR }}
@@ -58,15 +59,26 @@ jobs:
           terraform_version: 1.14.x
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - run: ./scripts/tf env=${{ matrix.env }} stack=${{ matrix.stack }} plan -input=false
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
+      - name: Render stack config
+        run: bash ./scripts/render-stack-config.sh ${{ matrix.env }} ${{ matrix.stack }}
+      - run: bash ./scripts/tf env=${{ matrix.env }} stack=${{ matrix.stack }} plan -input=false
 
   apply:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
-      TF_WORKDIR: ${{ vars.TF_WORKDIR || '.' }}
+      TF_WORKDIR: ${{ vars.TF_WORKDIR || 'infra' }}
+      TF_ORG_PREFIX: ${{ secrets.TF_ORG_PREFIX || vars.TF_ORG_PREFIX }}
+      TF_STATE_BUCKET_SUFFIX: ${{ secrets.TF_STATE_BUCKET_SUFFIX || vars.TF_STATE_BUCKET_SUFFIX }}
+      TF_ALLOWED_REGIONS: ${{ secrets.TF_ALLOWED_REGIONS || vars.TF_ALLOWED_REGIONS }}
+      TF_EXAMPLE_BUCKET_SUFFIX: ${{ secrets.TF_EXAMPLE_BUCKET_SUFFIX || vars.TF_EXAMPLE_BUCKET_SUFFIX }}
+      TF_EXTRA_TAGS_HCL: ${{ secrets.TF_EXTRA_TAGS_HCL || vars.TF_EXTRA_TAGS_HCL }}
+      TF_STATE_KMS_KEY_ARN: ${{ secrets.TF_STATE_KMS_KEY_ARN || vars.TF_STATE_KMS_KEY_ARN }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID || vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
     defaults:
       run:
         working-directory: ${{ env.TF_WORKDIR }}
@@ -83,15 +95,26 @@ jobs:
           terraform_version: 1.14.x
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - run: ./scripts/tf env=${{ matrix.env }} stack=${{ matrix.stack }} apply -auto-approve -input=false
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
+      - name: Render stack config
+        run: bash ./scripts/render-stack-config.sh ${{ matrix.env }} ${{ matrix.stack }}
+      - run: bash ./scripts/tf env=${{ matrix.env }} stack=${{ matrix.stack }} apply -auto-approve -input=false
 
   dispatch:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
-      TF_WORKDIR: ${{ vars.TF_WORKDIR || '.' }}
+      TF_WORKDIR: ${{ vars.TF_WORKDIR || 'infra' }}
+      TF_ORG_PREFIX: ${{ secrets.TF_ORG_PREFIX || vars.TF_ORG_PREFIX }}
+      TF_STATE_BUCKET_SUFFIX: ${{ secrets.TF_STATE_BUCKET_SUFFIX || vars.TF_STATE_BUCKET_SUFFIX }}
+      TF_ALLOWED_REGIONS: ${{ secrets.TF_ALLOWED_REGIONS || vars.TF_ALLOWED_REGIONS }}
+      TF_EXAMPLE_BUCKET_SUFFIX: ${{ secrets.TF_EXAMPLE_BUCKET_SUFFIX || vars.TF_EXAMPLE_BUCKET_SUFFIX }}
+      TF_EXTRA_TAGS_HCL: ${{ secrets.TF_EXTRA_TAGS_HCL || vars.TF_EXTRA_TAGS_HCL }}
+      TF_STATE_KMS_KEY_ARN: ${{ secrets.TF_STATE_KMS_KEY_ARN || vars.TF_STATE_KMS_KEY_ARN }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID || vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
     defaults:
       run:
         working-directory: ${{ env.TF_WORKDIR }}
@@ -104,6 +127,8 @@ jobs:
           terraform_version: 1.14.x
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - run: ./scripts/tf env=${{ inputs.env }} stack=${{ inputs.stack }} ${{ inputs.action }} -input=false
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
+      - name: Render stack config
+        run: bash ./scripts/render-stack-config.sh ${{ inputs.env }} ${{ inputs.stack }}
+      - run: bash ./scripts/tf env=${{ inputs.env }} stack=${{ inputs.stack }} ${{ inputs.action }} -input=false

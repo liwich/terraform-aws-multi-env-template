@@ -13,65 +13,75 @@
 - **Guardrails** Account and region checks via `check` blocks, provider `allowed_account_ids`, `default_tags`, policy-as-code in CI, separate credentials per env, and pipeline approvals/concurrency controls.
 - **Backend Strategy (S3)** Bucket naming `<ORG_OR_PROJECT_PREFIX>-tfstate-<ENV>-<ACCOUNT_ID>-<PRIMARY_REGION>-<STATE_BUCKET_SUFFIX>`, key `dev/storage/terraform.tfstate`, versioning + encryption + public access block, TLS-only bucket policy, and lockfiles via `use_lockfile = true`. DynamoDB migration: remove `dynamodb_table`, add `use_lockfile = true`, run `terraform init -migrate-state`, then decommission the table.
 - **IAM Strategy (Local + CI)** Local uses AWS profile + optional `assume_role_arn`; CI uses OIDC with short-lived roles, least privilege to state bucket and stack resources.
-- **Module Strategy** Reusable modules live in `/modules`, live stacks in `/live`, versions are pinned via tags or SHAs, and module chains are kept shallow.
+- **Module Strategy** Reusable modules live in `/infra/modules`, live stacks in `/infra/live`, versions are pinned via tags or SHAs, and module chains are kept shallow.
 - **Security and Governance Defaults** SSE-KMS recommended, IAM least privilege per env for state access, bucket policy restricts principals and enforces TLS, CloudTrail for audit, optional S3 access logs to a central log bucket, and no secrets in `*.tfvars` (use SSM/Secrets Manager instead).
 - **CI/CD Proposal** Plan on PR, apply on merge with approvals, environment protections for stage/prod, concurrency per env/stack, and state access via least-privilege roles.
 - **Resource Dependencies** Bootstrap is standalone and only creates backend resources; live stacks depend on bootstrap; avoid circular dependencies between bootstrap and live stacks.
 
 **Repo Tree**
-- `bootstrap/` creates the state backend.
-- `live/` contains per-env stacks.
-- `modules/` contains reusable modules.
-- `scripts/` contains wrapper scripts.
+- `infra/` contains all Terraform code and scripts.
+  - `infra/bootstrap/` creates the state backend.
+  - `infra/live/` contains per-env stacks.
+  - `infra/modules/` contains reusable modules.
+  - `infra/scripts/` contains wrapper scripts.
 
 ```
 .
 ├── .cursorrules
-├── .github/workflows/terraform.yml
+├── .github
+│   └── workflows
+│       ├── bootstrap.yml
+│       └── terraform.yml
+├── .gitignore
 ├── .pre-commit-config.yaml
-├── .tflint.hcl
-├── Makefile
 ├── PROJECT_SPEC.md
 ├── README.md
-├── bootstrap
-│   ├── dev.tfvars
-│   ├── main.tf
-│   ├── outputs.tf
-│   ├── prod.tfvars
-│   ├── providers.tf
-│   ├── stage.tfvars
-│   ├── variables.tf
-│   └── versions.tf
-├── live
-│   ├── dev
-│   │   └── storage
-│   │       ├── backend.hcl
-│   │       ├── checks.tf
-│   │       ├── locals.tf
-│   │       ├── main.tf
-│   │       ├── outputs.tf
-│   │       ├── providers.tf
-│   │       ├── terraform.tfvars
-│   │       ├── variables.tf
-│   │       └── versions.tf
-│   ├── prod
-│   │   └── storage
-│   │       └── (same as dev)
-│   └── stage
-│       └── storage
-│           └── (same as dev)
-├── modules
-│   └── s3-bucket
-│       ├── main.tf
-│       ├── outputs.tf
-│       └── variables.tf
-└── scripts
-    ├── tf
-    └── tf.ps1
+├── tutorial.md
+└── infra
+    ├── .tflint.hcl
+    ├── Makefile
+    ├── bootstrap
+    │   ├── dev.tfvars.example
+    │   ├── main.tf
+    │   ├── outputs.tf
+    │   ├── prod.tfvars.example
+    │   ├── providers.tf
+    │   ├── stage.tfvars.example
+    │   ├── variables.tf
+    │   └── versions.tf
+    ├── live
+    │   ├── dev
+    │   │   └── storage
+    │   │       ├── backend.hcl
+    │   │       ├── checks.tf
+    │   │       ├── locals.tf
+    │   │       ├── main.tf
+    │   │       ├── outputs.tf
+    │   │       ├── providers.tf
+    │   │       ├── terraform.tfvars
+    │   │       ├── variables.tf
+    │   │       └── versions.tf
+    │   ├── prod
+    │   │   └── storage
+    │   │       └── (same as dev)
+    │   └── stage
+    │       └── storage
+    │           └── (same as dev)
+    ├── modules
+    │   └── s3-bucket
+    │       ├── main.tf
+    │       ├── outputs.tf
+    │       └── variables.tf
+    └── scripts
+        ├── bootstrap-iam.ps1
+        ├── bootstrap-iam.sh
+        ├── render-stack-config.sh
+        ├── tf
+        └── tf.ps1
 ```
 
 **Code Snippets (Grouped by File Path)**
-- `bootstrap/versions.tf`
+- `infra/bootstrap/versions.tf`
 ```hcl
 terraform {
   required_version = "~> 1.14.0"
@@ -85,7 +95,7 @@ terraform {
 }
 ```
 
-- `bootstrap/providers.tf`
+- `infra/bootstrap/providers.tf`
 ```hcl
 provider "aws" {
   region              = var.primary_region
@@ -105,7 +115,7 @@ provider "aws" {
 }
 ```
 
-- `bootstrap/main.tf`
+- `infra/bootstrap/main.tf`
 ```hcl
 locals {
   state_bucket_name = lower(join("-", compact([
@@ -151,7 +161,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
 }
 ```
 
-- `bootstrap/variables.tf`
+- `infra/bootstrap/variables.tf`
 ```hcl
 variable "org_prefix" {
   type        = string
@@ -175,7 +185,7 @@ variable "use_kms" {
 }
 ```
 
-- `bootstrap/outputs.tf`
+- `infra/bootstrap/outputs.tf`
 ```hcl
 output "state_bucket_name" {
   description = "Name of the Terraform state bucket."
@@ -188,7 +198,7 @@ output "kms_key_arn" {
 }
 ```
 
-- `bootstrap/dev.tfvars`
+- `infra/bootstrap/dev.tfvars.example`
 ```hcl
 org_prefix = "<ORG_OR_PROJECT_PREFIX>"
 env        = "dev"
@@ -203,7 +213,7 @@ aws_profile        = "<LOCAL_AWS_PROFILE>"
 assume_role_arn    = "arn:aws:iam::<DEV_ACCOUNT_ID>:role/<BOOTSTRAP_ROLE_NAME>"
 ```
 
-- `live/dev/storage/versions.tf`
+- `infra/live/dev/storage/versions.tf`
 ```hcl
 terraform {
   required_version = "~> 1.14.0"
@@ -219,7 +229,7 @@ terraform {
 }
 ```
 
-- `live/dev/storage/providers.tf`
+- `infra/live/dev/storage/providers.tf`
 ```hcl
 provider "aws" {
   region              = var.primary_region
@@ -239,7 +249,7 @@ provider "aws" {
 }
 ```
 
-- `live/dev/storage/locals.tf`
+- `infra/live/dev/storage/locals.tf`
 ```hcl
 locals {
   example_bucket_name = lower(join("-", compact([
@@ -259,7 +269,7 @@ locals {
 }
 ```
 
-- `live/dev/storage/checks.tf`
+- `infra/live/dev/storage/checks.tf`
 ```hcl
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
@@ -275,7 +285,7 @@ check "region_guardrail" {
 }
 ```
 
-- `live/dev/storage/main.tf`
+- `infra/live/dev/storage/main.tf`
 ```hcl
 module "example_bucket" {
   source = "../../../modules/s3-bucket"
@@ -287,7 +297,7 @@ module "example_bucket" {
 }
 ```
 
-- `live/dev/storage/backend.hcl`
+- `infra/live/dev/storage/backend.hcl`
 ```hcl
 bucket         = "<STATE_BUCKET_NAME>"
 key            = "dev/storage/terraform.tfstate"
@@ -297,7 +307,7 @@ use_lockfile   = true
 # kms_key_id   = "<STATE_KMS_KEY_ARN>"
 ```
 
-- `live/dev/storage/terraform.tfvars`
+- `infra/live/dev/storage/terraform.tfvars`
 ```hcl
 env                 = "dev"
 org_prefix          = "<ORG_OR_PROJECT_PREFIX>"
@@ -314,7 +324,7 @@ aws_profile     = "<LOCAL_AWS_PROFILE>"
 example_bucket_suffix = "<OPTIONAL_BUCKET_SUFFIX>"
 ```
 
-- `modules/s3-bucket/variables.tf`
+- `infra/modules/s3-bucket/variables.tf`
 ```hcl
 variable "name" {
   type        = string
@@ -328,7 +338,7 @@ variable "sse_algorithm" {
 }
 ```
 
-- `modules/s3-bucket/main.tf`
+- `infra/modules/s3-bucket/main.tf`
 ```hcl
 resource "aws_s3_bucket" "this" {
   bucket        = var.name
@@ -354,7 +364,7 @@ resource "aws_s3_bucket_public_access_block" "this" {
 ```
 
 **Scripts and Makefile Examples**
-- `scripts/tf`
+- `infra/scripts/tf`
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -363,6 +373,9 @@ env=""
 stack="storage"
 cmd=""
 args=()
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="${TF_ROOT:-$(cd "${script_dir}/.." && pwd)}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -382,12 +395,19 @@ if [ -z "$cmd" ]; then
   exit 1
 fi
 
+allow_local="${ALLOW_LOCAL_TF:-}"
+if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${CI:-}" != "true" ] && [ "$allow_local" != "1" ] && [ "$allow_local" != "true" ]; then
+  echo "Local Terraform execution is disabled. Use GitHub Actions workflows (PR/merge or workflow_dispatch)."
+  echo "Set ALLOW_LOCAL_TF=1 to override for break-glass use only."
+  exit 1
+fi
+
 if [ -z "$env" ] && [ "$cmd" != "fmt" ]; then
   echo "Missing env=. Example: env=dev"
   exit 1
 fi
 
-stack_dir="live/${env}/${stack}"
+stack_dir="${root_dir}/live/${env}/${stack}"
 backend_config="${stack_dir}/backend.hcl"
 
 if [ "$cmd" != "fmt" ]; then
@@ -399,7 +419,7 @@ fi
 
 case "$cmd" in
   fmt)
-    terraform fmt -recursive
+    terraform fmt -recursive "${root_dir}"
     ;;
   lint)
     tflint --init --chdir "$stack_dir"
@@ -418,7 +438,7 @@ case "$cmd" in
 esac
 ```
 
-- `scripts/tf.ps1`
+- `infra/scripts/tf.ps1`
 ```powershell
 param(
   [string]$env = "",
@@ -432,13 +452,25 @@ if (-not $cmd) {
   exit 1
 }
 
+$allowLocal = $env:ALLOW_LOCAL_TF
+if (-not $env:GITHUB_ACTIONS -and -not $env:CI -and $allowLocal -notin @("1", "true", "TRUE")) {
+  Write-Host "Local Terraform execution is disabled. Use GitHub Actions workflows (PR/merge or workflow_dispatch)."
+  Write-Host "Set ALLOW_LOCAL_TF=1 to override for break-glass use only."
+  exit 1
+}
+
 if (-not $env -and $cmd -ne "fmt") {
   Write-Host "Missing -env. Example: -env dev"
   exit 1
 }
 
-$stackDir = "live/$env/$stack"
-$backendConfig = "$stackDir/backend.hcl"
+$rootDir = $env:TF_ROOT
+if (-not $rootDir) {
+  $rootDir = (Resolve-Path (Join-Path $PSScriptRoot ".."))
+}
+
+$stackDir = Join-Path $rootDir "live/$env/$stack"
+$backendConfig = Join-Path $stackDir "backend.hcl"
 
 if ($cmd -ne "fmt") {
   if (-not (Test-Path $stackDir)) {
@@ -449,7 +481,7 @@ if ($cmd -ne "fmt") {
 
 switch ($cmd) {
   "fmt" {
-    terraform fmt -recursive
+    terraform fmt -recursive $rootDir
   }
   "lint" {
     tflint --init --chdir $stackDir
@@ -468,9 +500,9 @@ switch ($cmd) {
 }
 ```
 
-- `Makefile`
+- `infra/Makefile`
 ```makefile
-TF := ./scripts/tf
+TF := bash ./scripts/tf
 STACK ?= storage
 
 dev-plan:
@@ -492,7 +524,7 @@ repos:
       - id: terraform_tfsec
 ```
 
-- `.tflint.hcl`
+- `infra/.tflint.hcl`
 ```hcl
 plugin "aws" {
   enabled = true
@@ -511,23 +543,22 @@ jobs:
         env: [dev]
         stack: [storage]
     steps:
-      - run: ./scripts/tf env=${{ matrix.env }} stack=${{ matrix.stack }} plan -input=false
+      - run: bash ./scripts/tf env=${{ matrix.env }} stack=${{ matrix.stack }} plan -input=false
 ```
 
 **Getting Started**
 1) Prerequisites: Terraform 1.14.x, AWS CLI, tflint, tfsec (or checkov), pre-commit (optional).
-2) Fill placeholders in `bootstrap/*.tfvars`, `live/*/storage/terraform.tfvars`, and `live/*/storage/backend.hcl`.
+2) Fill placeholders in `infra/bootstrap/*.tfvars.example` (reference only); CI renders `infra/bootstrap/<env>.tfvars`, `infra/live/<env>/<stack>/terraform.tfvars`, and `infra/live/<env>/<stack>/backend.hcl` from secrets.
 3) CI-only execution: local Terraform commands are disabled by default; use GitHub Actions workflows.
 4) Bootstrap backend (one-time per account): Actions → **Terraform Bootstrap** → Run workflow (env + action).
 5) Run stacks: PR triggers plan, merge to `main` applies with approvals; manual runs via Actions → **Terraform** → Run workflow.
 6) Quality checks: run in CI; local break-glass requires `ALLOW_LOCAL_TF=1`.
-7) CI/CD: configure GitHub Environments `dev`, `stage`, `prod` with `AWS_ROLE_ARN` and `AWS_REGION`, and require approvals for stage/prod.
+7) CI/CD: configure GitHub Environments `dev`, `stage`, `prod` with required secrets (`TF_ORG_PREFIX`, `AWS_ACCOUNT_ID`, `AWS_REGION`, `AWS_BOOTSTRAP_ROLE_ARN`, `AWS_ROLE_ARN`) and require approvals for stage/prod.
 
 **Template Completion Checklist**
-- Fill account IDs, regions, and prefix placeholders.
-- Run backend bootstrap in each account (dev, stage, prod).
-- Update backend configs with the correct state bucket name and key.
-- Run dev plan/apply using the scripts.
+- Set GitHub Environment secrets (account IDs, regions, prefix, role ARNs).
+- Run backend bootstrap in each account (dev, stage, prod) via GitHub Actions.
+- Run dev plan/apply via PR/merge or workflow dispatch.
 - Add new stack/module using the same guardrails and backend patterns.
 
 **Tradeoffs and Risks to Watch**
@@ -538,5 +569,5 @@ jobs:
 
 **Sanity Check**
 - dev/stage/prod use distinct buckets and distinct keys.
-- Local and CI workflows both call the same scripts and backend configs.
+- CI renders `backend.hcl` and `terraform.tfvars` from secrets before running Terraform.
 - Bootstrap has a clear owner (platform team) and is run once per account.

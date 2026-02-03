@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-TF := ./scripts/tf
+TF := bash ./scripts/tf
 STACK ?= storage
 ENV ?= dev
 
