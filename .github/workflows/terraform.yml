@@ -10,6 +10,11 @@ on:
       - "infra/**"
   workflow_dispatch:
     inputs:
+      target:
+        type: choice
+        options: [live, bootstrap]
+        default: live
+        description: "Target type"
       env:
         type: choice
         options: [dev, stage, prod]
@@ -18,71 +23,58 @@ on:
       stack:
         type: string
         default: storage
-        description: "Target stack"
+        description: "Target stack (for live only)"
       action:
         type: choice
-        options: [plan, apply]
+        options: [plan, apply, destroy]
         default: plan
         description: "Terraform action"
+      bootstrap-phase:
+        type: choice
+        options: [normal, initial, migrate]
+        default: normal
+        description: "Bootstrap phase: initial (no backend), migrate (move state to S3), normal"
 
 permissions:
   id-token: write
   contents: read
+  pull-requests: write
+
+env:
+  TF_WORKDIR: infra
 
 jobs:
+  # ====================
+  # LIVE STACKS - PR Plan
+  # ====================
   plan:
+    name: "Plan: ${{ matrix.env }}/${{ matrix.stack }}"
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    env:
-      TF_WORKDIR: ${{ vars.TF_WORKDIR || 'infra' }}
-      TF_ORG_PREFIX: ${{ secrets.TF_ORG_PREFIX || vars.TF_ORG_PREFIX }}
-      TF_STATE_BUCKET_SUFFIX: ${{ secrets.TF_STATE_BUCKET_SUFFIX || vars.TF_STATE_BUCKET_SUFFIX }}
-      TF_ALLOWED_REGIONS: ${{ secrets.TF_ALLOWED_REGIONS || vars.TF_ALLOWED_REGIONS }}
-      TF_EXAMPLE_BUCKET_SUFFIX: ${{ secrets.TF_EXAMPLE_BUCKET_SUFFIX || vars.TF_EXAMPLE_BUCKET_SUFFIX }}
-      TF_EXTRA_TAGS_HCL: ${{ secrets.TF_EXTRA_TAGS_HCL || vars.TF_EXTRA_TAGS_HCL }}
-      TF_STATE_KMS_KEY_ARN: ${{ secrets.TF_STATE_KMS_KEY_ARN || vars.TF_STATE_KMS_KEY_ARN }}
-      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID || vars.AWS_ACCOUNT_ID }}
-      AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
-      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
-    defaults:
-      run:
-        working-directory: ${{ env.TF_WORKDIR }}
     strategy:
+      fail-fast: false
       matrix:
         env: [dev]
         stack: [storage]
     environment: ${{ matrix.env }}
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: ./.github/actions/terraform
         with:
-          terraform_version: 1.14.x
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
-      - name: Render stack config
-        run: bash ./scripts/render-stack-config.sh ${{ matrix.env }} ${{ matrix.stack }}
-      - run: bash ./scripts/tf env=${{ matrix.env }} stack=${{ matrix.stack }} plan -input=false
+          working-directory: ${{ env.TF_WORKDIR }}/live/${{ matrix.env }}/${{ matrix.stack }}
+          action: plan
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
+  # ====================
+  # LIVE STACKS - Push Apply
+  # ====================
   apply:
+    name: "Apply: ${{ matrix.env }}/${{ matrix.stack }}"
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    env:
-      TF_WORKDIR: ${{ vars.TF_WORKDIR || 'infra' }}
-      TF_ORG_PREFIX: ${{ secrets.TF_ORG_PREFIX || vars.TF_ORG_PREFIX }}
-      TF_STATE_BUCKET_SUFFIX: ${{ secrets.TF_STATE_BUCKET_SUFFIX || vars.TF_STATE_BUCKET_SUFFIX }}
-      TF_ALLOWED_REGIONS: ${{ secrets.TF_ALLOWED_REGIONS || vars.TF_ALLOWED_REGIONS }}
-      TF_EXAMPLE_BUCKET_SUFFIX: ${{ secrets.TF_EXAMPLE_BUCKET_SUFFIX || vars.TF_EXAMPLE_BUCKET_SUFFIX }}
-      TF_EXTRA_TAGS_HCL: ${{ secrets.TF_EXTRA_TAGS_HCL || vars.TF_EXTRA_TAGS_HCL }}
-      TF_STATE_KMS_KEY_ARN: ${{ secrets.TF_STATE_KMS_KEY_ARN || vars.TF_STATE_KMS_KEY_ARN }}
-      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID || vars.AWS_ACCOUNT_ID }}
-      AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
-      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
-    defaults:
-      run:
-        working-directory: ${{ env.TF_WORKDIR }}
     strategy:
+      fail-fast: false
       matrix:
         env: [dev, stage, prod]
         stack: [storage]
@@ -90,45 +82,98 @@ jobs:
     concurrency: terraform-${{ matrix.env }}-${{ matrix.stack }}
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: ./.github/actions/terraform
         with:
-          terraform_version: 1.14.x
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
-      - name: Render stack config
-        run: bash ./scripts/render-stack-config.sh ${{ matrix.env }} ${{ matrix.stack }}
-      - run: bash ./scripts/tf env=${{ matrix.env }} stack=${{ matrix.stack }} apply -auto-approve -input=false
+          working-directory: ${{ env.TF_WORKDIR }}/live/${{ matrix.env }}/${{ matrix.stack }}
+          action: apply
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-  dispatch:
-    if: github.event_name == 'workflow_dispatch'
+  # ====================
+  # MANUAL DISPATCH - Live
+  # ====================
+  dispatch-live:
+    name: "Dispatch: ${{ inputs.env }}/${{ inputs.stack }}"
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'live'
     runs-on: ubuntu-latest
-    env:
-      TF_WORKDIR: ${{ vars.TF_WORKDIR || 'infra' }}
-      TF_ORG_PREFIX: ${{ secrets.TF_ORG_PREFIX || vars.TF_ORG_PREFIX }}
-      TF_STATE_BUCKET_SUFFIX: ${{ secrets.TF_STATE_BUCKET_SUFFIX || vars.TF_STATE_BUCKET_SUFFIX }}
-      TF_ALLOWED_REGIONS: ${{ secrets.TF_ALLOWED_REGIONS || vars.TF_ALLOWED_REGIONS }}
-      TF_EXAMPLE_BUCKET_SUFFIX: ${{ secrets.TF_EXAMPLE_BUCKET_SUFFIX || vars.TF_EXAMPLE_BUCKET_SUFFIX }}
-      TF_EXTRA_TAGS_HCL: ${{ secrets.TF_EXTRA_TAGS_HCL || vars.TF_EXTRA_TAGS_HCL }}
-      TF_STATE_KMS_KEY_ARN: ${{ secrets.TF_STATE_KMS_KEY_ARN || vars.TF_STATE_KMS_KEY_ARN }}
-      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID || vars.AWS_ACCOUNT_ID }}
-      AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
-      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
-    defaults:
-      run:
-        working-directory: ${{ env.TF_WORKDIR }}
     environment: ${{ inputs.env }}
     concurrency: terraform-${{ inputs.env }}-${{ inputs.stack }}
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: ./.github/actions/terraform
+        with:
+          working-directory: ${{ env.TF_WORKDIR }}/live/${{ inputs.env }}/${{ inputs.stack }}
+          action: ${{ inputs.action }}
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+  # ====================
+  # MANUAL DISPATCH - Bootstrap
+  # ====================
+  dispatch-bootstrap:
+    name: "Bootstrap: ${{ inputs.env }}"
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'bootstrap'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    concurrency: terraform-bootstrap-${{ inputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.14.x
-      - uses: aws-actions/configure-aws-credentials@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
-      - name: Render stack config
-        run: bash ./scripts/render-stack-config.sh ${{ inputs.env }} ${{ inputs.stack }}
-      - run: bash ./scripts/tf env=${{ inputs.env }} stack=${{ inputs.stack }} ${{ inputs.action }} -input=false
+          role-to-assume: ${{ secrets.AWS_BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # Phase: initial - First run with no backend (creates bucket)
+      - name: Bootstrap Init (initial - no backend)
+        if: inputs.bootstrap-phase == 'initial'
+        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
+        run: terraform init -backend=false -input=false
+
+      - name: Bootstrap Apply (initial)
+        if: inputs.bootstrap-phase == 'initial' && inputs.action == 'apply'
+        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
+        run: terraform apply -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
+
+      - name: Bootstrap Plan (initial)
+        if: inputs.bootstrap-phase == 'initial' && inputs.action == 'plan'
+        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
+        run: terraform plan -var-file=${{ inputs.env }}.tfvars -input=false
+
+      # Phase: migrate - Move local state to S3 backend
+      - name: Bootstrap Init (migrate state to S3)
+        if: inputs.bootstrap-phase == 'migrate'
+        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
+        run: |
+          terraform init \
+            -backend-config=${{ inputs.env }}.backend.hcl \
+            -migrate-state \
+            -force-copy \
+            -input=false
+
+      # Phase: normal - Standard operations with S3 backend
+      - name: Bootstrap Init (normal)
+        if: inputs.bootstrap-phase == 'normal'
+        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
+        run: terraform init -backend-config=${{ inputs.env }}.backend.hcl -input=false
+
+      - name: Bootstrap Plan (normal)
+        if: inputs.bootstrap-phase == 'normal' && inputs.action == 'plan'
+        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
+        run: terraform plan -var-file=${{ inputs.env }}.tfvars -input=false
+
+      - name: Bootstrap Apply (normal)
+        if: inputs.bootstrap-phase == 'normal' && inputs.action == 'apply'
+        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
+        run: terraform apply -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
+
+      - name: Bootstrap Destroy (normal)
+        if: inputs.bootstrap-phase == 'normal' && inputs.action == 'destroy'
+        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
+        run: terraform destroy -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
