@@ -206,6 +206,12 @@ bootstrap_policy="$(cat <<EOF
       "Resource": "*"
     },
     {
+      "Sid": "ListAllBuckets",
+      "Effect": "Allow",
+      "Action": ["s3:ListAllMyBuckets"],
+      "Resource": "*"
+    },
+    {
       "Sid": "StateBucketAdmin",
       "Effect": "Allow",
       "Action": [

@@ -1,3 +1,7 @@
+---
+globs: infra/*
+alwaysApply: false
+---
 # Cursor Rules
 
 - Use Terraform CLI 1.14.x and pin provider versions.
