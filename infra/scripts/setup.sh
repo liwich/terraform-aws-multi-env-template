@@ -236,23 +236,27 @@ EOF
       "Sid": "StateBucketAdmin",
       "Effect": "Allow",
       "Action": [
-        "s3:GetBucketLocation",
+        "s3:GetBucket*",
+        "s3:GetLifecycleConfiguration",
+        "s3:GetReplicationConfiguration",
+        "s3:GetAccelerateConfiguration",
+        "s3:GetEncryptionConfiguration",
         "s3:ListBucket",
-        "s3:GetBucketPolicy",
-        "s3:GetBucketVersioning",
-        "s3:GetBucketEncryption",
-        "s3:GetBucketPublicAccessBlock",
-        "s3:GetBucketOwnershipControls",
-        "s3:GetBucketLogging",
-        "s3:GetBucketTagging",
-        "s3:GetBucketAcl",
         "s3:PutBucketPolicy",
         "s3:PutBucketVersioning",
         "s3:PutBucketEncryption",
         "s3:PutBucketPublicAccessBlock",
         "s3:PutBucketOwnershipControls",
         "s3:PutBucketLogging",
-        "s3:PutBucketTagging"
+        "s3:PutBucketTagging",
+        "s3:PutBucketCors",
+        "s3:PutLifecycleConfiguration",
+        "s3:PutReplicationConfiguration",
+        "s3:PutAccelerateConfiguration",
+        "s3:DeleteBucketPolicy",
+        "s3:DeleteBucketCors",
+        "s3:DeleteBucketLifecycle",
+        "s3:DeleteBucketReplication"
       ],
       "Resource": "arn:aws:s3:::${bucket_name}"
     },
@@ -269,36 +273,60 @@ EOF
         "s3:ListBucketMultipartUploads"
       ],
       "Resource": "arn:aws:s3:::${bucket_name}/*"
+    },
+    {
+      "Sid": "IAMPolicyManagement",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreatePolicy",
+        "iam:DeletePolicy",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListPolicyVersions",
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicyVersion",
+        "iam:TagPolicy",
+        "iam:UntagPolicy"
+      ],
+      "Resource": "arn:aws:iam::${account_id}:policy/${ORG_PREFIX}-terraform-execution-*"
+    },
+    {
+      "Sid": "IAMRolePolicyAttachment",
+      "Effect": "Allow",
+      "Action": [
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": "arn:aws:iam::${account_id}:role/${exec_role}"
     }${bootstrap_kms_stmt}
   ]
 }
 EOF
 )
 
-  # Execution role policy
+  # Execution role policy - MINIMAL: only state bucket access
+  # Infrastructure permissions are managed by Terraform in bootstrap/execution-policy.tf
   local exec_kms_stmt=""
   if [ "$use_kms" = "true" ]; then
-    exec_kms_stmt=",
+    exec_kms_stmt=',
     {
-      \"Sid\": \"KmsStateViaS3\",
-      \"Effect\": \"Allow\",
-      \"Action\": [
-        \"kms:Encrypt\",
-        \"kms:Decrypt\",
-        \"kms:GenerateDataKey*\",
-        \"kms:ReEncrypt*\",
-        \"kms:DescribeKey\"
+      "Sid": "KmsStateViaS3",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:GenerateDataKey*",
+        "kms:ReEncrypt*",
+        "kms:DescribeKey"
       ],
-      \"Resource\": \"*\",
-      \"Condition\": {
-        \"StringEquals\": {
-          \"kms:ViaService\": \"s3.${region}.amazonaws.com\"
-        },
-        \"StringLike\": {
-          \"kms:EncryptionContext:aws:s3:arn\": \"arn:aws:s3:::${bucket_name}/*\"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "s3.'"${region}"'.amazonaws.com"
         }
       }
-    }"
+    }'
   fi
 
   local exec_policy
@@ -333,6 +361,9 @@ EOF
 }
 EOF
 )
+  # NOTE: Infrastructure permissions (S3, EC2, Lambda, etc.) are managed by Terraform
+  # in infra/bootstrap/execution-policy.tf and applied via the bootstrap workflow.
+  # Update that file and run bootstrap to grant new permissions.
 
   # Attach policies
   if [ "$dry_run" = "true" ]; then
@@ -371,6 +402,19 @@ validate_org_prefix "$ORG_PREFIX" || exit 1
 prompt PRIMARY_REGION "Primary AWS region" "$DEFAULT_REGION"
 prompt STATE_BUCKET_SUFFIX "State bucket suffix for uniqueness (optional, press Enter to skip)" ""
 
+# KMS encryption option
+echo ""
+prompt_yn USE_KMS "Use KMS encryption for state bucket? (recommended for production)"
+
+# Access logging option
+prompt_yn ENABLE_ACCESS_LOGS "Enable S3 access logging for state bucket?"
+LOG_BUCKET_NAME=""
+LOG_BUCKET_PREFIX="tfstate/"
+if [ "$ENABLE_ACCESS_LOGS" = "true" ]; then
+  prompt LOG_BUCKET_NAME "Log bucket name (must already exist)"
+  prompt LOG_BUCKET_PREFIX "Log bucket prefix" "tfstate/"
+fi
+
 # GitHub repository info for OIDC
 echo ""
 log_info "GitHub Repository (for OIDC role trust)"
@@ -389,7 +433,7 @@ fi
 echo ""
 log_info "Environment Configuration"
 echo ""
-echo "Configure each environment (dev, stage, prod). Enter 'skip' to skip an environment."
+echo "Configure each environment. Dev is required; stage/prod can be skipped by pressing Enter."
 echo ""
 
 declare -A ENV_ACCOUNTS
@@ -400,14 +444,23 @@ declare -A ENV_BUCKETS
 for env in dev stage prod; do
   echo ""
   log_info "=== $env environment ==="
-  prompt account_id "AWS Account ID for $env (or 'skip')"
   
-  if [ "$account_id" = "skip" ]; then
-    log_warn "Skipping $env environment"
-    continue
+  if [ "$env" = "dev" ]; then
+    # Dev is required
+    prompt account_id "AWS Account ID for $env"
+    while ! validate_account_id "$account_id" 2>/dev/null; do
+      log_error "Invalid AWS account ID: $account_id (must be 12 digits)"
+      prompt account_id "AWS Account ID for $env"
+    done
+  else
+    # Stage/prod are optional - Enter to skip
+    prompt account_id "AWS Account ID for $env (Enter to skip)"
+    if [ -z "$account_id" ]; then
+      log_warn "Skipping $env environment"
+      continue
+    fi
+    validate_account_id "$account_id" || exit 1
   fi
-  
-  validate_account_id "$account_id" || exit 1
   ENV_ACCOUNTS[$env]="$account_id"
   
   prompt bootstrap_role "Bootstrap IAM Role name for $env" "TerraformBootstrapRole"
@@ -441,7 +494,7 @@ if [ "$PROVISION_IAM" = "true" ]; then
       "${ENV_EXEC_ROLES[$env]}" \
       "$GITHUB_ORG" \
       "$GITHUB_REPO" \
-      "true" \
+      "$USE_KMS" \
       "${DRY_RUN:-false}" || true
     echo ""
   done
@@ -458,6 +511,13 @@ for env in "${!ENV_ACCOUNTS[@]}"; do
   exec_role="${ENV_EXEC_ROLES[$env]}"
   bucket_name="${ENV_BUCKETS[$env]}"
   
+  # Format log bucket name for tfvars (quoted string or null)
+  if [ -n "$LOG_BUCKET_NAME" ]; then
+    log_bucket_tfvars="\"$LOG_BUCKET_NAME\""
+  else
+    log_bucket_tfvars="null"
+  fi
+  
   # Bootstrap tfvars
   cat > "${ROOT_DIR}/bootstrap/${env}.tfvars" <<EOF
 org_prefix = "${ORG_PREFIX}"
@@ -467,10 +527,10 @@ account_id = "${account_id}"
 primary_region      = "${PRIMARY_REGION}"
 state_bucket_suffix = "${STATE_BUCKET_SUFFIX}"
 
-use_kms            = true
-enable_access_logs = false
-log_bucket_name    = null
-log_bucket_prefix  = "tfstate/"
+use_kms            = ${USE_KMS}
+enable_access_logs = ${ENABLE_ACCESS_LOGS}
+log_bucket_name    = ${log_bucket_tfvars}
+log_bucket_prefix  = "${LOG_BUCKET_PREFIX}"
 
 aws_profile     = null
 assume_role_arn = null
@@ -480,6 +540,19 @@ state_bucket_rw_principals    = ["arn:aws:iam::${account_id}:role/${exec_role}"]
 kms_admin_principals          = ["arn:aws:iam::${account_id}:role/${bootstrap_role}"]
 
 extra_tags = {}
+
+#######################################
+# Execution Role Policy (managed by Terraform)
+#######################################
+
+manage_execution_role_policy = true
+execution_role_name          = "${exec_role}"
+
+# S3 permissions automatically scoped to \${org_prefix}-* buckets
+enable_s3_permissions = true
+
+# Add extra permissions here (EC2, Lambda, DynamoDB, etc.)
+extra_execution_policy_statements = []
 EOF
   log_success "Created bootstrap/${env}.tfvars"
   

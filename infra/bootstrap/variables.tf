@@ -108,3 +108,55 @@ variable "extra_tags" {
   description = "Extra tags applied to all bootstrap resources."
   default     = {}
 }
+
+#######################################
+# Execution Role Policy Management
+#######################################
+
+variable "manage_execution_role_policy" {
+  type        = bool
+  description = "Whether bootstrap should manage the execution role's IAM policy. Set to true after the role exists."
+  default     = false
+}
+
+variable "execution_role_name" {
+  type        = string
+  description = "Name of the Terraform execution role to attach policies to."
+  default     = "TerraformExecutionRole"
+}
+
+variable "enable_s3_permissions" {
+  type        = bool
+  description = "Grant S3 management permissions scoped to org_prefix-* buckets. Automatically uses var.org_prefix."
+  default     = true
+}
+
+variable "extra_execution_policy_statements" {
+  type        = list(any)
+  description = <<-EOT
+    Additional IAM policy statements for the execution role.
+    Use this for permissions beyond the built-in S3 permissions.
+    
+    Example:
+    [
+      {
+        Sid      = "EC2Management"
+        Effect   = "Allow"
+        Action   = ["ec2:Describe*", "ec2:CreateVpc", "ec2:DeleteVpc"]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "aws:RequestedRegion" = ["us-east-1"]
+          }
+        }
+      },
+      {
+        Sid      = "LambdaManagement"
+        Effect   = "Allow"
+        Action   = ["lambda:*"]
+        Resource = "arn:aws:lambda:*:*:function:myprefix-*"
+      }
+    ]
+  EOT
+  default     = []
+}

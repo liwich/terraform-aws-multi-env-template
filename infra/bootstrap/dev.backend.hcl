@@ -1,4 +1,4 @@
-bucket       = "liwich-tfstate-dev-262764262296-us-west-2"
+bucket       = "liwich-tfstate-dev-262764262296-us-west-2-01"
 key          = "bootstrap/terraform.tfstate"
 region       = "us-west-2"
 encrypt      = true
