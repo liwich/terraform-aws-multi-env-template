@@ -1,12 +1,13 @@
 name: Terraform
 
 on:
-  pull_request:
+  push:
+    branches: [dev, stage, prod]
     paths:
       - "infra/live/**"
       - "infra/modules/**"
-  push:
-    branches: [main]
+  pull_request:
+    branches: [dev, stage, prod]
     paths:
       - "infra/live/**"
       - "infra/modules/**"
@@ -18,64 +19,29 @@ permissions:
 
 jobs:
   # ============================================
-  # PLAN - Runs on every PR
+  # PLAN - Runs on PRs and pushes
   # ============================================
   plan:
     name: "Plan: ${{ matrix.env }}/${{ matrix.stack }}"
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     environment: ${{ matrix.env }}
     strategy:
       fail-fast: false
       matrix:
-        env: [dev]
-        stack: [storage]
-    
-    steps:
-      - name: Check required secrets
-        run: |
-          if [ -z "${{ secrets.AWS_REGION }}" ]; then
-            echo "::error::Missing secret: AWS_REGION. Configure it in Settings → Environments → ${{ matrix.env }}"
-            exit 1
-          fi
-          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
-            echo "::error::Missing secret: AWS_ROLE_ARN. Configure it in Settings → Environments → ${{ matrix.env }}"
-            exit 1
-          fi
-
-      - uses: actions/checkout@v4
-      
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.14.x
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Terraform Init
-        working-directory: infra/live/${{ matrix.env }}/${{ matrix.stack }}
-        run: terraform init -backend-config=backend.hcl
-
-      - name: Terraform Plan
-        working-directory: infra/live/${{ matrix.env }}/${{ matrix.stack }}
-        run: terraform plan -input=false
-
-  # ============================================
-  # APPLY - Runs on merge to main (with approval)
-  # ============================================
-  apply:
-    name: "Apply: ${{ matrix.env }}/${{ matrix.stack }}"
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: ${{ matrix.env }}
-    concurrency: terraform-${{ matrix.env }}-${{ matrix.stack }}
-    strategy:
-      fail-fast: false
-      matrix:
-        env: [dev]
-        stack: [storage]
+        include:
+          - branch: dev
+            env: dev
+            stack: storage
+          - branch: stage
+            env: stage
+            stack: storage
+          - branch: prod
+            env: prod
+            stack: storage
+    # Match the branch for PRs or pushes
+    if: |
+      (github.event_name == 'pull_request' && github.base_ref == matrix.branch) ||
+      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', matrix.branch))
     
     steps:
       - name: Check required secrets
@@ -107,6 +73,73 @@ jobs:
       - name: Terraform Plan
         working-directory: infra/live/${{ matrix.env }}/${{ matrix.stack }}
         run: terraform plan -input=false -out=tfplan
+
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.env }}-${{ matrix.stack }}
+          path: infra/live/${{ matrix.env }}/${{ matrix.stack }}/tfplan
+          retention-days: 1
+
+  # ============================================
+  # APPLY - Runs on push to branches
+  # dev: auto-apply
+  # stage/prod: requires environment approval
+  # ============================================
+  apply:
+    name: "Apply: ${{ matrix.env }}/${{ matrix.stack }}"
+    runs-on: ubuntu-latest
+    environment: ${{ matrix.env }}
+    concurrency: terraform-${{ matrix.env }}-${{ matrix.stack }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - branch: dev
+            env: dev
+            stack: storage
+          - branch: stage
+            env: stage
+            stack: storage
+          - branch: prod
+            env: prod
+            stack: storage
+    # Only run apply on push to matching branch
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', matrix.branch)
+    needs: [plan]
+    
+    steps:
+      - name: Check required secrets
+        run: |
+          if [ -z "${{ secrets.AWS_REGION }}" ]; then
+            echo "::error::Missing secret: AWS_REGION. Configure it in Settings → Environments → ${{ matrix.env }}"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+            echo "::error::Missing secret: AWS_ROLE_ARN. Configure it in Settings → Environments → ${{ matrix.env }}"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.x
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ matrix.env }}-${{ matrix.stack }}
+          path: infra/live/${{ matrix.env }}/${{ matrix.stack }}
+
+      - name: Terraform Init
+        working-directory: infra/live/${{ matrix.env }}/${{ matrix.stack }}
+        run: terraform init -backend-config=backend.hcl
 
       - name: Terraform Apply
         working-directory: infra/live/${{ matrix.env }}/${{ matrix.stack }}
