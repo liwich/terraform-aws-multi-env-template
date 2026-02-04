@@ -32,14 +32,13 @@ cd my-infra/infra
 git add -A && git commit -m "Configure Terraform"
 git push origin main
 
-# 5. Run bootstrap via GitHub Actions
-#    Actions → Terraform → Run workflow
-#    - target: bootstrap
-#    - env: dev
-#    - action: apply
-#    - bootstrap-phase: initial
-#
-#    After success, run again with bootstrap-phase: migrate
+# 5. Bootstrap (one-click)
+#    Actions → Bootstrap → Run workflow → Select env: dev
+#    Creates S3 bucket and migrates state automatically
+
+# 6. Deploy infrastructure
+#    - Open PR → automatic plan
+#    - Merge to main → automatic apply (with environment approval)
 ```
 
 ## Repository Structure
@@ -90,33 +89,40 @@ The setup wizard (`setup.sh` / `setup.ps1`) handles everything:
 
 ## Bootstrap Process
 
-The bootstrap creates the S3 state bucket and persists its own state using a two-phase approach:
+The bootstrap workflow automatically handles first-time setup:
 
-| Phase | Command | Description |
-|-------|---------|-------------|
-| `initial` | Creates bucket | Runs with local state |
-| `migrate` | Migrates state | Moves local state to S3 |
-| `normal` | Standard ops | All subsequent operations |
+1. **First run**: Detects bucket doesn't exist → creates with local state → migrates to S3
+2. **Later runs**: Uses existing S3 backend → plan and apply changes
 
-## GitHub Actions Workflow
+Just run: **Actions → Bootstrap → Run workflow → Select environment**
 
-Single workflow (`.github/workflows/terraform.yml`) handles all operations:
+## GitHub Actions Workflows
+
+Two simple workflows:
+
+| Workflow | Purpose |
+|----------|---------|
+| `bootstrap.yml` | One-click backend setup (run once per environment) |
+| `terraform.yml` | GitOps pipeline for live infrastructure |
+
+### Live Infrastructure Pipeline
 
 | Trigger | Behavior |
 |---------|----------|
-| Pull Request | `terraform plan` on live stacks |
-| Push to main | `terraform apply` on live stacks |
-| workflow_dispatch | Manual operations for bootstrap or live |
+| Pull Request | `terraform plan` (review changes) |
+| Merge to main | `terraform apply` (with environment approval) |
 
 ### Required GitHub Environment Secrets
 
-Configure these in each GitHub Environment (dev, stage, prod):
+Configure in each GitHub Environment (dev, stage, prod):
 
 | Secret | Description |
 |--------|-------------|
 | `AWS_REGION` | Primary AWS region |
 | `AWS_BOOTSTRAP_ROLE_ARN` | IAM role for bootstrap operations |
 | `AWS_ROLE_ARN` | IAM role for stack operations |
+
+**Tip**: Enable "Required reviewers" on stage/prod environments for apply approval.
 
 ## Local Development
 

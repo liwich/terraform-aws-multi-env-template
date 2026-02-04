@@ -82,21 +82,15 @@ git push origin main
 
 ## 5) Bootstrap the backend (dev)
 
-GitHub Actions → **Terraform** → Run workflow:
-
-**First run (creates bucket with local state):**
-- `target`: `bootstrap`
+GitHub Actions → **Bootstrap** → Run workflow:
 - `env`: `dev`
-- `action`: `apply`
-- `bootstrap-phase`: `initial`
 
-**Second run (migrates state to S3):**
-- `target`: `bootstrap`
-- `env`: `dev`
-- `action`: `plan`
-- `bootstrap-phase`: `migrate`
+That's it! The workflow automatically:
+1. Detects this is first run (bucket doesn't exist)
+2. Creates the S3 bucket and KMS key
+3. Migrates bootstrap state to S3
 
-After migration, the bootstrap state is persisted in S3.
+You'll see: `✅ Bootstrap complete! State migrated to S3.`
 
 ## 6) Run the dev stack
 
@@ -135,7 +129,8 @@ After migration, the bootstrap state is persisted in S3.
 | AccessDenied during setup | Ensure AWS credentials have IAM admin permissions |
 | Wrong AWS account error | Check `expected_account_id` in tfvars matches your credentials |
 | Wrong region error | Check `allowed_regions` includes your `primary_region` |
-| State bucket not found | Run bootstrap with `initial` phase first, then `migrate` |
+| State bucket not found | Run the Bootstrap workflow first |
+| Bootstrap fails on second run | Normal - bucket exists, will use remote state |
 
 ## 10) Local execution (break-glass only)
 

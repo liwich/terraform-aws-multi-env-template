@@ -3,177 +3,111 @@ name: Terraform
 on:
   pull_request:
     paths:
-      - "infra/**"
+      - "infra/live/**"
+      - "infra/modules/**"
   push:
-    branches: ["main"]
+    branches: [main]
     paths:
-      - "infra/**"
-  workflow_dispatch:
-    inputs:
-      target:
-        type: choice
-        options: [live, bootstrap]
-        default: live
-        description: "Target type"
-      env:
-        type: choice
-        options: [dev, stage, prod]
-        default: dev
-        description: "Target environment"
-      stack:
-        type: string
-        default: storage
-        description: "Target stack (for live only)"
-      action:
-        type: choice
-        options: [plan, apply, destroy]
-        default: plan
-        description: "Terraform action"
-      bootstrap-phase:
-        type: choice
-        options: [normal, initial, migrate]
-        default: normal
-        description: "Bootstrap phase: initial (no backend), migrate (move state to S3), normal"
+      - "infra/live/**"
+      - "infra/modules/**"
 
 permissions:
   id-token: write
   contents: read
   pull-requests: write
 
-env:
-  TF_WORKDIR: infra
-
 jobs:
-  # ====================
-  # LIVE STACKS - PR Plan
-  # ====================
+  # ============================================
+  # PLAN - Runs on every PR
+  # ============================================
   plan:
     name: "Plan: ${{ matrix.env }}/${{ matrix.stack }}"
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    environment: ${{ matrix.env }}
     strategy:
       fail-fast: false
       matrix:
         env: [dev]
         stack: [storage]
-    environment: ${{ matrix.env }}
+    
     steps:
+      - name: Check required secrets
+        run: |
+          if [ -z "${{ secrets.AWS_REGION }}" ]; then
+            echo "::error::Missing secret: AWS_REGION. Configure it in Settings → Environments → ${{ matrix.env }}"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+            echo "::error::Missing secret: AWS_ROLE_ARN. Configure it in Settings → Environments → ${{ matrix.env }}"
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/terraform
+      
+      - uses: hashicorp/setup-terraform@v3
         with:
-          working-directory: ${{ env.TF_WORKDIR }}/live/${{ matrix.env }}/${{ matrix.stack }}
-          action: plan
-          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+          terraform_version: 1.14.x
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-  # ====================
-  # LIVE STACKS - Push Apply
-  # ====================
+      - name: Terraform Init
+        working-directory: infra/live/${{ matrix.env }}/${{ matrix.stack }}
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Terraform Plan
+        working-directory: infra/live/${{ matrix.env }}/${{ matrix.stack }}
+        run: terraform plan -input=false
+
+  # ============================================
+  # APPLY - Runs on merge to main (with approval)
+  # ============================================
   apply:
     name: "Apply: ${{ matrix.env }}/${{ matrix.stack }}"
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: ${{ matrix.env }}
+    concurrency: terraform-${{ matrix.env }}-${{ matrix.stack }}
     strategy:
       fail-fast: false
       matrix:
-        env: [dev, stage, prod]
+        env: [dev]
         stack: [storage]
-    environment: ${{ matrix.env }}
-    concurrency: terraform-${{ matrix.env }}-${{ matrix.stack }}
+    
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/terraform
-        with:
-          working-directory: ${{ env.TF_WORKDIR }}/live/${{ matrix.env }}/${{ matrix.stack }}
-          action: apply
-          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Check required secrets
+        run: |
+          if [ -z "${{ secrets.AWS_REGION }}" ]; then
+            echo "::error::Missing secret: AWS_REGION. Configure it in Settings → Environments → ${{ matrix.env }}"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+            echo "::error::Missing secret: AWS_ROLE_ARN. Configure it in Settings → Environments → ${{ matrix.env }}"
+            exit 1
+          fi
 
-  # ====================
-  # MANUAL DISPATCH - Live
-  # ====================
-  dispatch-live:
-    name: "Dispatch: ${{ inputs.env }}/${{ inputs.stack }}"
-    if: github.event_name == 'workflow_dispatch' && inputs.target == 'live'
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.env }}
-    concurrency: terraform-${{ inputs.env }}-${{ inputs.stack }}
-    steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/terraform
-        with:
-          working-directory: ${{ env.TF_WORKDIR }}/live/${{ inputs.env }}/${{ inputs.stack }}
-          action: ${{ inputs.action }}
-          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-  # ====================
-  # MANUAL DISPATCH - Bootstrap
-  # ====================
-  dispatch-bootstrap:
-    name: "Bootstrap: ${{ inputs.env }}"
-    if: github.event_name == 'workflow_dispatch' && inputs.target == 'bootstrap'
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.env }}
-    concurrency: terraform-bootstrap-${{ inputs.env }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.14.x
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_BOOTSTRAP_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      # Phase: initial - First run with no backend (creates bucket)
-      - name: Bootstrap Init (initial - no backend)
-        if: inputs.bootstrap-phase == 'initial'
-        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
-        run: terraform init -backend=false -input=false
+      - name: Terraform Init
+        working-directory: infra/live/${{ matrix.env }}/${{ matrix.stack }}
+        run: terraform init -backend-config=backend.hcl
 
-      - name: Bootstrap Apply (initial)
-        if: inputs.bootstrap-phase == 'initial' && inputs.action == 'apply'
-        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
-        run: terraform apply -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
+      - name: Terraform Plan
+        working-directory: infra/live/${{ matrix.env }}/${{ matrix.stack }}
+        run: terraform plan -input=false -out=tfplan
 
-      - name: Bootstrap Plan (initial)
-        if: inputs.bootstrap-phase == 'initial' && inputs.action == 'plan'
-        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
-        run: terraform plan -var-file=${{ inputs.env }}.tfvars -input=false
-
-      # Phase: migrate - Move local state to S3 backend
-      - name: Bootstrap Init (migrate state to S3)
-        if: inputs.bootstrap-phase == 'migrate'
-        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
-        run: |
-          terraform init \
-            -backend-config=${{ inputs.env }}.backend.hcl \
-            -migrate-state \
-            -force-copy \
-            -input=false
-
-      # Phase: normal - Standard operations with S3 backend
-      - name: Bootstrap Init (normal)
-        if: inputs.bootstrap-phase == 'normal'
-        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
-        run: terraform init -backend-config=${{ inputs.env }}.backend.hcl -input=false
-
-      - name: Bootstrap Plan (normal)
-        if: inputs.bootstrap-phase == 'normal' && inputs.action == 'plan'
-        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
-        run: terraform plan -var-file=${{ inputs.env }}.tfvars -input=false
-
-      - name: Bootstrap Apply (normal)
-        if: inputs.bootstrap-phase == 'normal' && inputs.action == 'apply'
-        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
-        run: terraform apply -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
-
-      - name: Bootstrap Destroy (normal)
-        if: inputs.bootstrap-phase == 'normal' && inputs.action == 'destroy'
-        working-directory: ${{ env.TF_WORKDIR }}/bootstrap
-        run: terraform destroy -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
+      - name: Terraform Apply
+        working-directory: infra/live/${{ matrix.env }}/${{ matrix.stack }}
+        run: terraform apply -input=false tfplan

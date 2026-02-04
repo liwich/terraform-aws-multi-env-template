@@ -200,6 +200,7 @@ function Provision-IAM {
         "s3:GetBucketOwnershipControls",
         "s3:GetBucketLogging",
         "s3:GetBucketTagging",
+        "s3:GetBucketAcl",
         "s3:PutBucketPolicy",
         "s3:PutBucketVersioning",
         "s3:PutBucketEncryption",

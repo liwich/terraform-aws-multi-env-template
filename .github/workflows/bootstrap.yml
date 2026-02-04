@@ -1,0 +1,121 @@
+name: Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        type: choice
+        options: [dev, stage, prod]
+        default: dev
+        description: "Environment to bootstrap"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  bootstrap:
+    name: "Bootstrap ${{ inputs.env }}"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    concurrency: bootstrap-${{ inputs.env }}
+    
+    steps:
+      - name: Check required secrets
+        run: |
+          if [ -z "${{ secrets.AWS_REGION }}" ]; then
+            echo "::error::Missing secret: AWS_REGION. Configure it in Settings → Environments → ${{ inputs.env }}"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AWS_BOOTSTRAP_ROLE_ARN }}" ]; then
+            echo "::error::Missing secret: AWS_BOOTSTRAP_ROLE_ARN. Configure it in Settings → Environments → ${{ inputs.env }}"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.x
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Check if state bucket exists
+        id: check
+        working-directory: infra/bootstrap
+        run: |
+          BUCKET=$(grep 'bucket' ${{ inputs.env }}.backend.hcl | cut -d'"' -f2)
+          echo "bucket=$BUCKET" >> $GITHUB_OUTPUT
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ State bucket $BUCKET exists - will use remote state"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "📦 State bucket $BUCKET does not exist - will create"
+          fi
+
+      # ============================================
+      # FIRST TIME: Create bucket with local state, then migrate
+      # ============================================
+      - name: Init (local state)
+        if: steps.check.outputs.exists == 'false'
+        working-directory: infra/bootstrap
+        run: terraform init
+
+      - name: Apply (create bucket)
+        if: steps.check.outputs.exists == 'false'
+        working-directory: infra/bootstrap
+        run: terraform apply -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
+
+      - name: Create backend config
+        if: steps.check.outputs.exists == 'false'
+        working-directory: infra/bootstrap
+        run: |
+          cat > backend.tf <<'EOF'
+          terraform {
+            backend "s3" {}
+          }
+          EOF
+          echo "Created backend.tf for state migration"
+
+      - name: Migrate state to S3
+        if: steps.check.outputs.exists == 'false'
+        working-directory: infra/bootstrap
+        run: |
+          terraform init \
+            -backend-config=${{ inputs.env }}.backend.hcl \
+            -migrate-state \
+            -force-copy \
+            -input=false
+          echo "✅ Bootstrap complete! State migrated to S3 bucket: ${{ steps.check.outputs.bucket }}"
+
+      # ============================================
+      # SUBSEQUENT RUNS: Use S3 backend
+      # ============================================
+      - name: Create backend config (existing)
+        if: steps.check.outputs.exists == 'true'
+        working-directory: infra/bootstrap
+        run: |
+          cat > backend.tf <<'EOF'
+          terraform {
+            backend "s3" {}
+          }
+          EOF
+
+      - name: Init (S3 backend)
+        if: steps.check.outputs.exists == 'true'
+        working-directory: infra/bootstrap
+        run: terraform init -backend-config=${{ inputs.env }}.backend.hcl
+
+      - name: Plan
+        if: steps.check.outputs.exists == 'true'
+        working-directory: infra/bootstrap
+        run: terraform plan -var-file=${{ inputs.env }}.tfvars -input=false
+
+      - name: Apply
+        if: steps.check.outputs.exists == 'true'
+        working-directory: infra/bootstrap
+        run: terraform apply -var-file=${{ inputs.env }}.tfvars -auto-approve -input=false
