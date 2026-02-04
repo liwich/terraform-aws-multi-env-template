@@ -39,8 +39,9 @@ git push origin main
 #    Creates S3 bucket, KMS key, and execution role policy
 
 # 6. Deploy infrastructure
-#    - Open PR → automatic plan
-#    - Merge to main → automatic apply (with environment approval)
+#    - Open PR → automatic plan for all environments
+#    - Merge to main → auto-deploys to dev
+#    - Promote to stage/prod → Use "Run workflow" button (requires approval)
 ```
 
 ## Repository Structure
@@ -138,19 +139,64 @@ Then run the **Bootstrap** workflow to apply changes.
 
 ## GitHub Actions Workflows
 
-Two simple workflows:
+Two workflows for complete infrastructure management:
 
 | Workflow | Purpose |
 |----------|---------|
 | `bootstrap.yml` | One-click backend setup + policy management |
 | `terraform.yml` | GitOps pipeline for live infrastructure |
 
-### Live Infrastructure Pipeline
+### GitOps Deployment Workflow
+
+This template follows **GitOps best practices** with a single source of truth (`main` branch) and environment promotion:
+
+#### Daily Development Flow
+
+1. **Create a feature branch**
+   ```bash
+   git checkout -b feature/new-resource
+   ```
+
+2. **Make changes and push**
+   ```bash
+   git add infra/live/dev/storage/main.tf
+   git commit -m "Add new S3 bucket"
+   git push origin feature/new-resource
+   ```
+
+3. **Open Pull Request**
+   - Workflow automatically runs `terraform plan` for **all environments** (dev, stage, prod)
+   - Review the plans in the PR checks
+   - All plans must pass before merging
+
+4. **Merge to main**
+   - Automatically deploys to **dev** environment
+   - No approval required for dev
+
+#### Production Promotion
+
+To deploy to `stage` or `prod`:
+
+1. Go to **Actions** → **Terraform** workflow
+2. Click **"Run workflow"** button
+3. Select:
+   - **Environment**: `stage` or `prod`
+   - **Stack**: `storage` (or your stack name)
+4. Click **"Run workflow"**
+5. **Approve** when prompted (required for stage/prod)
+
+The workflow will:
+- Run `terraform plan` to show changes
+- Wait for environment approval (if configured)
+- Run `terraform apply` to deploy
+
+#### Workflow Triggers
 
 | Trigger | Behavior |
 |---------|----------|
-| Pull Request | `terraform plan` (review changes) |
-| Merge to main | `terraform apply` (with environment approval) |
+| Pull Request to `main` | Runs `terraform plan` for all environments (dev, stage, prod) |
+| Merge to `main` | Auto-deploys to **dev** environment |
+| Manual workflow dispatch | Promotes to **stage** or **prod** (requires approval) |
 
 ### Required GitHub Environment Secrets
 
@@ -162,7 +208,10 @@ Configure in each GitHub Environment (dev, stage, prod):
 | `AWS_BOOTSTRAP_ROLE_ARN` | IAM role for bootstrap operations |
 | `AWS_ROLE_ARN` | IAM role for stack operations |
 
-**Tip**: Enable "Required reviewers" on stage/prod environments for apply approval.
+**Security Tip**: 
+- Enable **"Required reviewers"** on `stage` and `prod` environments
+- This adds an approval gate before deployments to production environments
+- Go to: Settings → Environments → stage/prod → Add protection rules
 
 ## Local Development
 
@@ -174,6 +223,54 @@ cd infra
 ./scripts/tf env=dev stack=storage plan
 ```
 
+## Why GitOps?
+
+This template uses a **GitOps deployment model** for several benefits:
+
+✅ **Single Source of Truth** - All infrastructure code lives in `main` branch  
+✅ **Clear Promotion Path** - Changes flow: dev → stage → prod  
+✅ **Safety Gates** - Production deployments require explicit approval  
+✅ **Full Visibility** - PRs show plans for all environments before merging  
+✅ **Industry Standard** - Follows patterns used by HashiCorp, Gruntwork, and others  
+✅ **No Branch Drift** - Avoids merge conflicts and configuration divergence  
+
+### Workflow Diagram
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Developer Workflow                                      │
+└─────────────────────────────────────────────────────────┘
+                    │
+                    ▼
+        ┌───────────────────────┐
+        │  Create Feature Branch │
+        └───────────────────────┘
+                    │
+                    ▼
+        ┌───────────────────────┐
+        │  Make Changes & Push  │
+        └───────────────────────┘
+                    │
+                    ▼
+        ┌───────────────────────┐
+        │  Open PR to main      │
+        │  → Plan: dev/stage/prod│
+        └───────────────────────┘
+                    │
+                    ▼
+        ┌───────────────────────┐
+        │  Merge to main        │
+        │  → Auto-deploy to dev │
+        └───────────────────────┘
+                    │
+                    ▼
+        ┌───────────────────────┐
+        │  Manual Promotion     │
+        │  → stage (approval)   │
+        │  → prod (approval)    │
+        └───────────────────────┘
+```
+
 ## Adding a New Stack
 
 1. Copy an existing stack:
@@ -181,11 +278,20 @@ cd infra
    cp -r infra/live/dev/storage infra/live/dev/newstack
    ```
 
-2. Update `backend.hcl` with new state key
+2. Update `backend.hcl` with new state key:
+   ```hcl
+   key = "dev/newstack/terraform.tfstate"
+   ```
 
 3. Update `main.tf` for your resources
 
-4. Add to workflow matrix in `.github/workflows/terraform.yml`
+4. Add to workflow matrix in `.github/workflows/terraform.yml`:
+   ```yaml
+   matrix:
+     stack: [storage, newstack]
+   ```
+
+5. Create the same stack structure for `stage` and `prod` environments
 
 ## Prerequisites
 
