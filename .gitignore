@@ -7,13 +7,23 @@ crash.log
 crash.*.log
 .terraform.lock.hcl
 
-# Override files and local vars
-*.tfvars
-*.tfvars.json
+# Override files
 override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# Ignore tfvars by default (security)
+*.tfvars.json
+
+# But allow the generated config files (no secrets - those come from env vars)
+!infra/bootstrap/*.tfvars
+!infra/bootstrap/*.backend.hcl
+!infra/live/**/terraform.tfvars
+!infra/live/**/backend.hcl
+
+# Keep ignoring example files
+*.tfvars.example
 
 # CLI config
 .terraformrc
